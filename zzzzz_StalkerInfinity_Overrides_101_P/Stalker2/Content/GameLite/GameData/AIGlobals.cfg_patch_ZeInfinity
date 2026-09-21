@@ -1,0 +1,119 @@
+AISettings : struct.begin {bpatch}
+   RegionRank : struct.begin
+      [*] : struct.begin
+         Region = ERegion::Zone
+         MinRank = ERank::Newbie
+         MaxRank = ERank::Master
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::MalayaZona
+         MinRank = ERank::Newbie
+         MaxRank = ERank::Experienced
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::Svalka
+         MinRank = ERank::Newbie
+         MaxRank = ERank::Veteran
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::ChemZavod
+         MinRank = ERank::Newbie
+         MaxRank = ERank::Veteran
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::DickyOstrov
+         MinRank = ERank::Newbie
+         MaxRank = ERank::Veteran
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::Zaton
+         MinRank = ERank::Newbie
+         MaxRank = ERank::Veteran
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::Bolota
+         MinRank = ERank::Experienced
+         MaxRank = ERank::Master
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::NIICHAZ
+         MinRank = ERank::Experienced
+         MaxRank = ERank::Master
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::Gradirni
+         MinRank = ERank::Experienced
+         MaxRank = ERank::Master
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::Malahit
+         MinRank = ERank::Experienced
+         MaxRank = ERank::Veteran
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::Duga
+         MinRank = ERank::Experienced
+         MaxRank = ERank::Master
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::Rostock
+         MinRank = ERank::Experienced
+         MaxRank = ERank::Veteran
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::Yantar
+         MinRank = ERank::Experienced
+         MaxRank = ERank::Veteran
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::GoreliyLes
+         MinRank = ERank::Experienced
+         MaxRank = ERank::Veteran
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::Kordon
+         MinRank = ERank::Newbie
+         MaxRank = ERank::Veteran
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::RizhyLes
+         MinRank = ERank::Experienced
+         MaxRank = ERank::Master
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::Yanov
+         MinRank = ERank::Experienced
+         MaxRank = ERank::Master
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::Jupiter
+         MinRank = ERank::Experienced
+         MaxRank = ERank::Master
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::Pripyat
+         MinRank = ERank::Veteran
+         MaxRank = ERank::Master
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::ZheleznyLes
+         MinRank = ERank::Experienced
+         MaxRank = ERank::Master
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::CHAES
+         MinRank = ERank::Experienced
+         MaxRank = ERank::Master
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::Generatory
+         MinRank = ERank::Veteran
+         MaxRank = ERank::Master
+      struct.end
+      [*] : struct.begin
+         Region = ERegion::ZementniyZavod
+         MinRank = ERank::Experienced
+         MaxRank = ERank::Veteran
+      struct.end
+   struct.end
+struct.end

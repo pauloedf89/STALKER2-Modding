@@ -1,0 +1,4 @@
+DefaultConfig : struct.begin {bpatch}
+   ArmorDurabilityParamsCoef = 0.2
+   HelmetDurabilityParamsCoef = 0.2
+struct.end
