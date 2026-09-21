@@ -1,0 +1,21 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.5",
+	"FriendlyName": "EML",
+	"Description": "Extended Mutant Loots",
+	"Category": "Game Features",
+	"CreatedBy": "Anomal",
+	"CreatedByURL": "https://www.nexusmods.com/stalker2heartofchornobyl/mods/1452",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": true,
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"ExplicitlyLoaded": true,
+	"BuiltInInitialFeatureState": "Registered",
+	"Mod": true
+}

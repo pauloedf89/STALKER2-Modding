@@ -1,0 +1,3 @@
+﻿DefaultConfig : struct.begin {bpatch}
+	BoltLifetime = 500.0
+struct.end
