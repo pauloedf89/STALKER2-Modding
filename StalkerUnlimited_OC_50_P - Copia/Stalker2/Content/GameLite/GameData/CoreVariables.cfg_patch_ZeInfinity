@@ -1,0 +1,360 @@
+﻿DefaultConfig : struct.begin {bpatch}
+   ArmorDifferenceCoef = 1.5f
+   StaminaRegenStateCoefs : struct.begin
+      [0] : struct.begin
+         StateTag = EStateTag::SprintUnderRunSpeed
+         Value = -0.4
+      struct.end
+      [1] : struct.begin
+         StateTag = EStateTag::Sprint
+         Value = -0.9
+      struct.end
+      [2] : struct.begin
+         StateTag = EStateTag::Jogging
+         Value = -0.4
+      struct.end
+      [3] : struct.begin
+         StateTag = EStateTag::SlowRun
+         Value = 0
+      struct.end
+      [4] : struct.begin
+         StateTag = EStateTag::Run
+         Value = -0.4
+      struct.end
+      [5] : struct.begin
+         StateTag = EStateTag::Aim
+         Value = -0.25
+      struct.end
+   struct.end
+   InventoryPenaltyLessWeight = 40.0
+   MediumEffectStartUI = 40
+   CriticalEffectStartUI = 65
+   LastBulletStartScalingPlayerHPPercent = 1.0
+   LastBulletBaseDamageMultiplier = 1.0
+	BleedingChanceNonPenetrationMod = 1.0
+	BleedingPointsNonPenetrationMod = 1.0
+   CalmDamageFromPlayerCoef = 1.0
+	ArmorDeflectDamageCoefHuman = 1.5
+	ArmorDeflectDamageCoefMutant = 1.5
+	ArmorDeflectMinChance = 1.0
+	ArmorDeflectMaxChance = 1.0
+   ItemCostMinPercent = 0.05
+   BaseRepairCostModifier = 1.67
+   ReputationRepairCostModifiers : struct.begin
+      [0] : struct.begin
+         RelationLevel = ERelationLevel::Enemy
+         Modifier = 2.0
+      struct.end
+      [1] : struct.begin
+         RelationLevel = ERelationLevel::Disaffection
+         Modifier = 1.25
+      struct.end
+      [2] : struct.begin
+         RelationLevel = ERelationLevel::Neutral
+         Modifier = 1.0
+      struct.end
+      [3] : struct.begin
+         RelationLevel = ERelationLevel::Friend
+         Modifier = 0.9
+      struct.end
+   struct.end
+   StrikeGrenadeResistCoefs : struct.begin
+      [0] : struct.begin
+         ProtectionStrike = 0.f
+         GrenadeDamageResist = 0.0f
+      struct.end
+      [1] : struct.begin
+         ProtectionStrike = 1.f
+         GrenadeDamageResist = 0.2f
+      struct.end
+      [2] : struct.begin
+         ProtectionStrike = 2.f
+         GrenadeDamageResist = 0.3f
+      struct.end
+      [3] : struct.begin
+         ProtectionStrike = 3.f
+         GrenadeDamageResist = 0.5f
+      struct.end
+      [4] : struct.begin
+         ProtectionStrike = 4.f
+         GrenadeDamageResist = 0.6f
+      struct.end
+      [5] : struct.begin
+         ProtectionStrike = 5.f
+         GrenadeDamageResist = 0.7f
+      struct.end
+   struct.end
+   HandlessFOVAimModifier = 1.0
+   MutantLootContainerInteractRange = 200
+   MutantLootInteractHeightMin = 0
+   MutantLootInteractHeightMax = 180
+   MutantLootParams : struct.begin {bpatch}
+      [0] : struct.begin {bpatch}
+         CutRadiusModifier = 10
+      struct.end
+      [1] : struct.begin {bpatch}
+         CutRadiusModifier = 10
+      struct.end
+      [2] : struct.begin {bpatch}
+         CutRadiusModifier = 10
+      struct.end
+      [3] : struct.begin {bpatch}
+         CutRadiusModifier = 10
+      struct.end
+      [4] : struct.begin {bpatch}
+         CutRadiusModifier = 10
+      struct.end
+      [5] : struct.begin {bpatch}
+         CutRadiusModifier = 10
+      struct.end
+      [6] : struct.begin {bpatch}
+         CutRadiusModifier = 10
+      struct.end
+      [7] : struct.begin {bpatch}
+         CutRadiusModifier = 10
+      struct.end
+      [8] : struct.begin {bpatch}
+         CutRadiusModifier = 10
+      struct.end
+      [9] : struct.begin {bpatch}
+         CutRadiusModifier = 15
+      struct.end
+      [10] : struct.begin {bpatch}
+         CutRadiusModifier = 10
+      struct.end
+      [11] : struct.begin {bpatch}
+         CutRadiusModifier = 10
+      struct.end
+      [12] : struct.begin {bpatch}
+         CutRadiusModifier = 10
+      struct.end
+      [13] : struct.begin {bpatch}
+         CutRadiusModifier = 15
+      struct.end
+      [14] : struct.begin {bpatch}
+         CutRadiusModifier = 10
+      struct.end
+   struct.end
+   UIFloatPrecision = 2
+   RadiationPresetValues : struct.begin
+      [0] : struct.begin
+         Preset = ERadiationPreset::Light
+         RadioactivityValue = 30.f
+         RadiationPerSecondValue = 1.5f
+         GeigerRadiationIntensity = 0.3f
+         PostProcessRadiationIntensity = 0.25f
+         EffectPrototypeSIDs : struct.begin
+            [0] = ConstantRadiationLight
+            [1] = ConstantSupressionLight
+         struct.end
+      struct.end
+      [1] : struct.begin
+         Preset = ERadiationPreset::Medium
+         RadioactivityValue = 60.f
+         RadiationPerSecondValue = 3.0f
+         GeigerRadiationIntensity = 0.6f
+         PostProcessRadiationIntensity = 0.5f
+         EffectPrototypeSIDs : struct.begin
+            [0] = ConstantRadiationMedium
+            [1] = ConstantSupressionMedium
+         struct.end
+      struct.end
+      [2] : struct.begin
+         Preset = ERadiationPreset::Strong
+         RadioactivityValue = 80.f
+         RadiationPerSecondValue = 4.5f
+         GeigerRadiationIntensity = 0.8f
+         PostProcessRadiationIntensity = 0.7f
+         EffectPrototypeSIDs : struct.begin
+            [0] = ConstantRadiationStrong
+            [1] = ConstantSupressionStrong
+         struct.end
+      struct.end
+      [3] : struct.begin
+         Preset = ERadiationPreset::Deadly
+         RadioactivityValue = 99.f
+         RadiationPerSecondValue = 20.f
+         GeigerRadiationIntensity = 0.9f
+         PostProcessRadiationIntensity = 0.9f
+         EffectPrototypeSIDs : struct.begin
+            [0] = RadBlockFieldDamage
+         struct.end
+      struct.end
+      [4] : struct.begin
+         Preset = ERadiationPreset::RadBlock
+         RadioactivityValue = 100.f
+         RadiationPerSecondValue = 50.f
+         GeigerRadiationIntensity = 1.0f
+         PostProcessRadiationIntensity = 1.0f
+         EffectPrototypeSIDs : struct.begin
+            [0] = RadBlockFieldDamage
+         struct.end
+      struct.end
+      [5] : struct.begin
+         Preset = ERadiationPreset::Custom
+         RadioactivityValue = 1.f
+         RadiationPerSecondValue = 1.f
+         GeigerRadiationIntensity = 0.1f
+         PostProcessRadiationIntensity = 0.1f
+      struct.end
+      [6] : struct.begin
+         Preset = ERadiationPreset::Topaz
+         RadioactivityValue = 15.f
+         RadiationPerSecondValue = 1.f
+         GeigerRadiationIntensity = 0.2f
+         PostProcessRadiationIntensity = 0.45f
+      struct.end
+   struct.end
+   ArmorDurabilityParamsCoef = 0.2f
+   HelmetDurabilityParamsCoef = 0.2f
+   ItemInfoAffectingEffects : struct.begin
+      [0] : struct.begin
+         ItemInfoType = EItemInfoType::Damage
+         AffectingEffectTypes : struct.begin
+            [0] : struct.begin
+               EffectType = EEffectType::BaseDamage
+               Multiplier = 0.8f
+            struct.end
+            [1] : struct.begin
+               EffectType = EEffectType::ArmorPiercing
+               Multiplier = 0.7f
+            struct.end
+         struct.end
+      struct.end
+      [1] : struct.begin
+         ItemInfoType = EItemInfoType::Handling
+         AffectingEffectTypes : struct.begin
+            [0] : struct.begin
+               EffectType = EEffectType::AimingTime
+               Multiplier = -0.25f
+            struct.end
+            [1] : struct.begin
+               EffectType = EEffectType::Recoil
+               Multiplier = -0.5f
+            struct.end
+            [2] : struct.begin
+               EffectType = EEffectType::RecoilRadiusNormalizationInterval
+               Multiplier = -0.5f
+            struct.end
+            [3] : struct.begin
+               EffectType = EEffectType::AimingMovementSpeed
+               Multiplier = 0.1f
+            struct.end
+            [4] : struct.begin
+               EffectType = EEffectType::ShowEquipmentTime
+               Multiplier = 0.1f
+            struct.end
+            [5] : struct.begin
+               EffectType = EEffectType::ReloadingTime
+               Multiplier = -0.1f
+            struct.end
+         struct.end
+      struct.end
+      [2] : struct.begin
+         ItemInfoType = EItemInfoType::RateOfFire
+         AffectingEffectTypes : struct.begin
+            [0] : struct.begin
+               EffectType = EEffectType::FireInterval
+               Multiplier = -0.5f
+            struct.end
+         struct.end
+      struct.end
+      [3] : struct.begin
+         ItemInfoType = EItemInfoType::Range
+         AffectingEffectTypes =
+      struct.end
+      [4] : struct.begin
+         ItemInfoType = EItemInfoType::Accuracy
+         AffectingEffectTypes : struct.begin
+            [0] : struct.begin
+               EffectType = EEffectType::Dispersion
+               Multiplier = -0.1f
+            struct.end
+            [1] : struct.begin
+               EffectType = EEffectType::DispersionMaxRadiusExtension
+               Multiplier = -0.1f
+            struct.end
+            [2] : struct.begin
+               EffectType = EEffectType::DispersionPerIterationRadiusExtension
+               Multiplier = -0.1f
+            struct.end
+            [3] : struct.begin
+               EffectType = EEffectType::IdleSwayXModifier
+               Multiplier = -0.1f
+            struct.end
+            [4] : struct.begin
+               EffectType = EEffectType::BulletDropHeight
+               Multiplier = -0.1f
+            struct.end
+         struct.end
+      struct.end
+   struct.end
+   ArtifactSpawnPityStructs : struct.begin
+      [0] : struct.begin
+         Rank = ERank::Newbie
+         AttemptsCount = 1
+         RarityLuckIncrease : struct.begin
+            [0] : struct.begin
+               Rarity = EArtifactRarity::Common
+               LuckIncrease = 1.f
+            struct.end
+         struct.end
+      struct.end
+      [1] : struct.begin
+         Rank = ERank::Experienced
+         AttemptsCount = 1
+         RarityLuckIncrease : struct.begin
+            [0] : struct.begin
+               Rarity = EArtifactRarity::Common
+               LuckIncrease = 1.f
+            struct.end
+            [1] : struct.begin
+               Rarity = EArtifactRarity::Uncommon
+               LuckIncrease = 1.f
+            struct.end
+         struct.end
+      struct.end
+      [2] : struct.begin
+         Rank = ERank::Veteran
+         AttemptsCount = 1
+         RarityLuckIncrease : struct.begin
+            [0] : struct.begin
+               Rarity = EArtifactRarity::Common
+               LuckIncrease = 1.f
+            struct.end
+            [1] : struct.begin
+               Rarity = EArtifactRarity::Uncommon
+               LuckIncrease = 1.f
+            struct.end
+            [2] : struct.begin
+               Rarity = EArtifactRarity::Rare
+               LuckIncrease = 1.f
+            struct.end
+         struct.end
+      struct.end
+      [3] : struct.begin
+         Rank = ERank::Master
+         AttemptsCount = 1
+         RarityLuckIncrease : struct.begin
+            [0] : struct.begin
+               Rarity = EArtifactRarity::Common
+               LuckIncrease = 1.f
+            struct.end
+            [1] : struct.begin
+               Rarity = EArtifactRarity::Uncommon
+               LuckIncrease = 1.f
+            struct.end
+            [2] : struct.begin
+               Rarity = EArtifactRarity::Rare
+               LuckIncrease = 1.f
+            struct.end
+         struct.end
+      struct.end
+   struct.end
+   VitalMaxEnergeticOveruse = 750.f
+   VitalMaxEnergeticTolerance = 1000.f
+   VitalEnergeticOveruseDegen = -2.0f
+   VitalEnergeticToleranceDegen = -1.0f
+   VitalEnergeticToleranceDegenDelay = 30.f
+   AccumulateNPCToPlayerDamageSeconds = 4.0
+struct.end
