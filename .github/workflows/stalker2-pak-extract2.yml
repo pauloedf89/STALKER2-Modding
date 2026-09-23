@@ -1,0 +1,973 @@
+name: S.T.A.L.K.E.R. 2 - Universal Container Extractor
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_path:
+        description: 'Repository path to .pak or .utoc. For IoStore, the matching .ucas must be beside the .utoc.'
+        required: true
+        default: 'StalkerUnlimited_OC_50_P.utoc'
+        type: string
+
+      package_type:
+        description: 'Container type. Auto detects .pak vs .utoc.'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - pak
+          - iostore
+
+      include:
+        description: 'Optional path filter. Example: **/CharacterWeaponSettingsPrototypes/**'
+        required: false
+        default: ''
+        type: string
+
+      use_aes_key:
+        description: 'Use STALKER2_AES_KEY for encrypted containers'
+        required: true
+        default: false
+        type: boolean
+
+      output_folder:
+        description: 'Artifact/output folder name'
+        required: true
+        default: 'STALKER2_extracted'
+        type: string
+
+      keep_full_extraction:
+        description: 'Include the complete unfiltered extraction in the artifact'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+
+  extract:
+    name: Detect and extract STALKER 2 container
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+
+      # ============================================================
+      # VALIDATE INPUT
+      # ============================================================
+
+      - name: Validate package
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $package = '${{ inputs.package_path }}'
+          $requestedType = '${{ inputs.package_type }}'
+
+          if (-not (Test-Path -LiteralPath $package -PathType Leaf)) {
+            throw "Package was not found in the repository: $package"
+          }
+
+          $item = Get-Item -LiteralPath $package
+
+          Write-Host ''
+          Write-Host '========================================'
+          Write-Host 'PACKAGE'
+          Write-Host '========================================'
+          Write-Host "Path: $($item.FullName)"
+          Write-Host "Size: $($item.Length) bytes"
+          Write-Host "Extension: $($item.Extension)"
+          Write-Host "Requested type: $requestedType"
+          Write-Host ''
+
+          if ($item.Extension -notin @('.pak', '.utoc')) {
+            throw "Unsupported package extension: $($item.Extension). Select a .pak or .utoc file."
+          }
+
+          if ($requestedType -eq 'pak' -and $item.Extension -ne '.pak') {
+            throw "package_type=pak requires a .pak file."
+          }
+
+          if ($requestedType -eq 'iostore' -and $item.Extension -ne '.utoc') {
+            throw "package_type=iostore requires a .utoc file."
+          }
+
+          # ----------------------------------------------------------
+          # Determine actual package type
+          # ----------------------------------------------------------
+
+          if ($requestedType -eq 'auto') {
+
+            if ($item.Extension -eq '.pak') {
+              $detected = 'pak'
+            }
+            elseif ($item.Extension -eq '.utoc') {
+              $detected = 'iostore'
+            }
+
+          }
+          else {
+            $detected = $requestedType
+          }
+
+          Write-Host "Detected type: $detected"
+
+          # ----------------------------------------------------------
+          # IoStore requires the matching UCAS.
+          # ----------------------------------------------------------
+
+          if ($detected -eq 'iostore') {
+
+            $utoc = $item.FullName
+
+            $ucas = [System.IO.Path]::ChangeExtension(
+              $utoc,
+              '.ucas'
+            )
+
+            if (-not (Test-Path -LiteralPath $ucas -PathType Leaf)) {
+              throw "IoStore package is missing its matching .ucas file: $ucas"
+            }
+
+            $ucasItem = Get-Item -LiteralPath $ucas
+
+            Write-Host "UTOC: $utoc"
+            Write-Host "UCAS: $($ucasItem.FullName)"
+            Write-Host "UCAS size: $($ucasItem.Length) bytes"
+          }
+
+          "PACKAGE_TYPE=$detected" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          "PACKAGE_PATH=$($item.FullName)" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+
+      # ============================================================
+      # DOWNLOAD REPAK
+      # ============================================================
+
+      - name: Download repak v0.2.3
+        if: env.PACKAGE_TYPE == 'pak'
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $toolDir = Join-Path $env:RUNNER_TEMP 'repak'
+          $binDir = Join-Path $toolDir 'bin'
+          $zip = Join-Path $toolDir 'repak.zip'
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $binDir | Out-Null
+
+          $url = `
+            'https://github.com/trumank/repak/releases/download/v0.2.3/repak_cli-x86_64-pc-windows-msvc.zip'
+
+          Write-Host "Downloading repak v0.2.3..."
+
+          Invoke-WebRequest `
+            -Uri $url `
+            -OutFile $zip
+
+          Expand-Archive `
+            -LiteralPath $zip `
+            -DestinationPath $binDir `
+            -Force
+
+          $repak = Get-ChildItem `
+            -LiteralPath $binDir `
+            -Filter 'repak.exe' `
+            -File `
+            -Recurse |
+            Select-Object -First 1
+
+          if ($null -eq $repak) {
+            throw 'repak.exe was not found.'
+          }
+
+          "REPAK_EXE=$($repak.FullName)" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          & $repak.FullName --version
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "repak --version failed."
+          }
+
+
+      # ============================================================
+      # DOWNLOAD RETOC
+      # ============================================================
+
+      - name: Download retoc v0.1.5
+        if: env.PACKAGE_TYPE == 'iostore'
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $toolDir = Join-Path $env:RUNNER_TEMP 'retoc'
+          $binDir = Join-Path $toolDir 'bin'
+          $zip = Join-Path $toolDir 'retoc.zip'
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $binDir | Out-Null
+
+          $url = `
+            'https://github.com/trumank/retoc/releases/download/v0.1.5/retoc_cli-x86_64-pc-windows-msvc.zip'
+
+          Write-Host "Downloading retoc v0.1.5..."
+
+          Invoke-WebRequest `
+            -Uri $url `
+            -OutFile $zip
+
+          Expand-Archive `
+            -LiteralPath $zip `
+            -DestinationPath $binDir `
+            -Force
+
+          $retoc = Get-ChildItem `
+            -LiteralPath $binDir `
+            -Filter 'retoc.exe' `
+            -File `
+            -Recurse |
+            Select-Object -First 1
+
+          if ($null -eq $retoc) {
+            throw 'retoc.exe was not found.'
+          }
+
+          "RETOC_EXE=$($retoc.FullName)" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          & $retoc.FullName --version
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "retoc --version failed."
+          }
+
+
+      # ============================================================
+      # PREPARE DIRECTORIES
+      # ============================================================
+
+      - name: Prepare extraction directories
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $root = Join-Path `
+            $env:RUNNER_TEMP `
+            '${{ inputs.output_folder }}'
+
+          $full = Join-Path $root 'full'
+          $filtered = Join-Path $root 'filtered'
+          $logs = Join-Path $root 'logs'
+
+          if (Test-Path -LiteralPath $root) {
+            Remove-Item `
+              -LiteralPath $root `
+              -Recurse `
+              -Force
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $full | Out-Null
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $filtered | Out-Null
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $logs | Out-Null
+
+          "EXTRACT_ROOT=$root" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          "FULL_OUTPUT=$full" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          "FILTERED_OUTPUT=$filtered" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          "LOG_OUTPUT=$logs" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+
+      # ============================================================
+      # PAK INFO
+      # ============================================================
+
+      - name: Inspect PAK
+        if: env.PACKAGE_TYPE == 'pak'
+        env:
+          STALKER2_AES_KEY: ${{ secrets.STALKER2_AES_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $args = @()
+
+          if ('${{ inputs.use_aes_key }}' -eq 'true') {
+
+            if ([string]::IsNullOrWhiteSpace($env:STALKER2_AES_KEY)) {
+              throw 'use_aes_key=true but STALKER2_AES_KEY is not configured.'
+            }
+
+            $args += '--aes-key'
+            $args += $env:STALKER2_AES_KEY
+          }
+
+          Write-Host ''
+          Write-Host '========================================'
+          Write-Host 'REPAK INFO'
+          Write-Host '========================================'
+
+          & $env:REPAK_EXE @args info $env:PACKAGE_PATH 2>&1 |
+            Tee-Object `
+              -FilePath (Join-Path $env:LOG_OUTPUT 'repak-info.txt')
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "repak info failed with exit code $LASTEXITCODE."
+          }
+
+
+      # ============================================================
+      # PAK LIST
+      # ============================================================
+
+      - name: List PAK contents
+        if: env.PACKAGE_TYPE == 'pak'
+        env:
+          STALKER2_AES_KEY: ${{ secrets.STALKER2_AES_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $args = @()
+
+          if ('${{ inputs.use_aes_key }}' -eq 'true') {
+            $args += '--aes-key'
+            $args += $env:STALKER2_AES_KEY
+          }
+
+          Write-Host ''
+          Write-Host '========================================'
+          Write-Host 'REPAK FILE LIST'
+          Write-Host '========================================'
+
+          & $env:REPAK_EXE @args list $env:PACKAGE_PATH 2>&1 |
+            Tee-Object `
+              -FilePath (Join-Path $env:LOG_OUTPUT 'repak-list.txt')
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "repak list failed with exit code $LASTEXITCODE."
+          }
+
+
+      # ============================================================
+      # PAK EXTRACTION
+      # ============================================================
+
+      - name: Extract PAK with repak
+        if: env.PACKAGE_TYPE == 'pak'
+        env:
+          STALKER2_AES_KEY: ${{ secrets.STALKER2_AES_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $args = @()
+
+          if ('${{ inputs.use_aes_key }}' -eq 'true') {
+
+            if ([string]::IsNullOrWhiteSpace($env:STALKER2_AES_KEY)) {
+              throw 'use_aes_key=true but STALKER2_AES_KEY is not configured.'
+            }
+
+            $args += '--aes-key'
+            $args += $env:STALKER2_AES_KEY
+          }
+
+          $args += 'unpack'
+          $args += $env:PACKAGE_PATH
+
+          # repak uses the default output directory based on the
+          # input PAK name, so run it from the full-output directory.
+
+          Push-Location $env:FULL_OUTPUT
+
+          try {
+
+            Write-Host ''
+            Write-Host '========================================'
+            Write-Host 'REPAK EXTRACTION'
+            Write-Host '========================================'
+
+            & $env:REPAK_EXE @args 2>&1 |
+              Tee-Object `
+                -FilePath (Join-Path $env:LOG_OUTPUT 'repak-unpack.txt')
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "repak unpack failed with exit code $LASTEXITCODE."
+            }
+
+          }
+          finally {
+            Pop-Location
+          }
+
+
+      # ============================================================
+      # IOSTORE INFO
+      # ============================================================
+
+      - name: Inspect IoStore container
+        if: env.PACKAGE_TYPE == 'iostore'
+        env:
+          STALKER2_AES_KEY: ${{ secrets.STALKER2_AES_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $args = @()
+
+          if ('${{ inputs.use_aes_key }}' -eq 'true') {
+
+            if ([string]::IsNullOrWhiteSpace($env:STALKER2_AES_KEY)) {
+              throw 'use_aes_key=true but STALKER2_AES_KEY is not configured.'
+            }
+
+            $args += '--aes-key'
+            $args += $env:STALKER2_AES_KEY
+          }
+
+          Write-Host ''
+          Write-Host '========================================'
+          Write-Host 'RETOC INFO'
+          Write-Host '========================================'
+
+          & $env:RETOC_EXE @args info $env:PACKAGE_PATH 2>&1 |
+            Tee-Object `
+              -FilePath (Join-Path $env:LOG_OUTPUT 'retoc-info.txt')
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "retoc info failed with exit code $LASTEXITCODE."
+          }
+
+
+      # ============================================================
+      # IOSTORE LIST
+      # ============================================================
+
+      - name: List IoStore contents
+        if: env.PACKAGE_TYPE == 'iostore'
+        env:
+          STALKER2_AES_KEY: ${{ secrets.STALKER2_AES_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $args = @()
+
+          if ('${{ inputs.use_aes_key }}' -eq 'true') {
+            $args += '--aes-key'
+            $args += $env:STALKER2_AES_KEY
+          }
+
+          Write-Host ''
+          Write-Host '========================================'
+          Write-Host 'RETOC FILE LIST'
+          Write-Host '========================================'
+
+          & $env:RETOC_EXE @args list $env:PACKAGE_PATH 2>&1 |
+            Tee-Object `
+              -FilePath (Join-Path $env:LOG_OUTPUT 'retoc-list.txt')
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "retoc list failed with exit code $LASTEXITCODE."
+          }
+
+
+      # ============================================================
+      # IOSTORE MANIFEST
+      # ============================================================
+
+      - name: Generate IoStore manifest
+        if: env.PACKAGE_TYPE == 'iostore'
+        env:
+          STALKER2_AES_KEY: ${{ secrets.STALKER2_AES_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $args = @()
+
+          if ('${{ inputs.use_aes_key }}' -eq 'true') {
+            $args += '--aes-key'
+            $args += $env:STALKER2_AES_KEY
+          }
+
+          Write-Host ''
+          Write-Host '========================================'
+          Write-Host 'RETOC MANIFEST'
+          Write-Host '========================================'
+
+          & $env:RETOC_EXE @args manifest $env:PACKAGE_PATH 2>&1 |
+            Tee-Object `
+              -FilePath (Join-Path $env:LOG_OUTPUT 'retoc-manifest.txt')
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "retoc manifest failed with exit code $LASTEXITCODE."
+          }
+
+
+      # ============================================================
+      # IOSTORE EXTRACTION
+      # ============================================================
+
+      - name: Extract IoStore with retoc
+        if: env.PACKAGE_TYPE == 'iostore'
+        env:
+          STALKER2_AES_KEY: ${{ secrets.STALKER2_AES_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $args = @()
+
+          if ('${{ inputs.use_aes_key }}' -eq 'true') {
+
+            if ([string]::IsNullOrWhiteSpace($env:STALKER2_AES_KEY)) {
+              throw 'use_aes_key=true but STALKER2_AES_KEY is not configured.'
+            }
+
+            $args += '--aes-key'
+            $args += $env:STALKER2_AES_KEY
+          }
+
+          $args += 'unpack'
+          $args += $env:PACKAGE_PATH
+          $args += $env:FULL_OUTPUT
+
+          Write-Host ''
+          Write-Host '========================================'
+          Write-Host 'RETOC EXTRACTION'
+          Write-Host '========================================'
+          Write-Host "UTOC: $env:PACKAGE_PATH"
+          Write-Host "Output: $env:FULL_OUTPUT"
+          Write-Host ''
+
+          & $env:RETOC_EXE @args 2>&1 |
+            Tee-Object `
+              -FilePath (Join-Path $env:LOG_OUTPUT 'retoc-unpack.txt')
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "retoc unpack failed with exit code $LASTEXITCODE."
+          }
+
+
+      # ============================================================
+      # APPLY INCLUDE FILTER
+      # ============================================================
+
+      - name: Apply include filter
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $include = '${{ inputs.include }}'
+
+          Write-Host ''
+          Write-Host '========================================'
+          Write-Host 'FILTER'
+          Write-Host '========================================'
+
+          if ([string]::IsNullOrWhiteSpace($include)) {
+
+            Write-Host 'No include filter specified.'
+            Write-Host 'Copying complete extraction to filtered output.'
+
+            Get-ChildItem `
+              -LiteralPath $env:FULL_OUTPUT `
+              -Force |
+              Copy-Item `
+                -Destination $env:FILTERED_OUTPUT `
+                -Recurse `
+                -Force
+
+            exit 0
+          }
+
+          Write-Host "Include pattern: $include"
+
+          # ----------------------------------------------------------
+          # Normalize common glob syntax.
+          #
+          # GitHub users can enter:
+          #
+          #   **/CharacterWeaponSettingsPrototypes/**
+          #
+          # or:
+          #
+          #   */CharacterWeaponSettingsPrototypes/*
+          #
+          # PowerShell's -like operator is used after converting
+          # the common ** glob to *.
+          # ----------------------------------------------------------
+
+          $normalized = $include `
+            -replace '\*\*/', '*' `
+            -replace '/\*\*', '*' `
+            -replace '/', '\'
+
+          Write-Host "Normalized pattern: $normalized"
+
+          $files = Get-ChildItem `
+            -LiteralPath $env:FULL_OUTPUT `
+            -File `
+            -Recurse
+
+          $matched = 0
+
+          foreach ($file in $files) {
+
+            $relative = $file.FullName.Substring(
+              $env:FULL_OUTPUT.Length + 1
+            )
+
+            if ($relative -like $normalized) {
+
+              $destination = Join-Path `
+                $env:FILTERED_OUTPUT `
+                $relative
+
+              $destinationDir = Split-Path `
+                -Parent `
+                $destination
+
+              New-Item `
+                -ItemType Directory `
+                -Force `
+                -Path $destinationDir | Out-Null
+
+              Copy-Item `
+                -LiteralPath $file.FullName `
+                -Destination $destination `
+                -Force
+
+              $matched++
+
+              Write-Host $relative
+            }
+          }
+
+          Write-Host ''
+          Write-Host "Matched files: $matched"
+
+          if ($matched -eq 0) {
+
+            Write-Warning `
+              "The include filter did not match any extracted files."
+
+            # Do not fail the entire extraction. The logs and full
+            # extraction remain available for troubleshooting.
+          }
+
+
+      # ============================================================
+      # GENERATE MANIFEST
+      # ============================================================
+
+      - name: Generate manifest
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $manifest = Join-Path `
+            $env:EXTRACT_ROOT `
+            'manifest.txt'
+
+          $package = Get-Item `
+            -LiteralPath $env:PACKAGE_PATH
+
+          $files = @(
+            Get-ChildItem `
+              -LiteralPath $env:FULL_OUTPUT `
+              -File `
+              -Recurse
+          )
+
+          $filteredFiles = @(
+            Get-ChildItem `
+              -LiteralPath $env:FILTERED_OUTPUT `
+              -File `
+              -Recurse
+          )
+
+          $fullBytes = (
+            $files |
+            Measure-Object `
+              -Property Length `
+              -Sum
+          ).Sum
+
+          $filteredBytes = (
+            $filteredFiles |
+            Measure-Object `
+              -Property Length `
+              -Sum
+          ).Sum
+
+          @(
+            'S.T.A.L.K.E.R. 2 - Universal Container Extraction'
+            '==================================================='
+            ''
+            "Repository: $env:GITHUB_REPOSITORY"
+            "Commit: $env:GITHUB_SHA"
+            "Workflow run: $env:GITHUB_RUN_ID"
+            "Workflow: $env:GITHUB_WORKFLOW"
+            ''
+            "Package: $($package.Name)"
+            "Package path: $env:PACKAGE_PATH"
+            "Package type: $env:PACKAGE_TYPE"
+            "Package size: $($package.Length) bytes"
+            ''
+            "repak: v0.2.3"
+            "retoc: v0.1.5"
+            ''
+            "AES key used: ${{ inputs.use_aes_key }}"
+            "Include filter: ${{ inputs.include }}"
+            ''
+            "Full extraction file count: $($files.Count)"
+            "Full extraction bytes: $fullBytes"
+            ''
+            "Filtered file count: $($filteredFiles.Count)"
+            "Filtered bytes: $filteredBytes"
+            ''
+            '==================================================='
+            'Extracted files'
+            '==================================================='
+          ) |
+            Set-Content `
+              -LiteralPath $manifest `
+              -Encoding utf8
+
+          Get-ChildItem `
+            -LiteralPath $env:FILTERED_OUTPUT `
+            -File `
+            -Recurse |
+            ForEach-Object {
+
+              $_.FullName.Substring(
+                $env:FILTERED_OUTPUT.Length + 1
+              )
+
+            } |
+            Sort-Object |
+            Add-Content `
+              -LiteralPath $manifest `
+              -Encoding utf8
+
+          Write-Host ''
+          Write-Host '========================================'
+          Write-Host 'EXTRACTION SUMMARY'
+          Write-Host '========================================'
+          Write-Host "Package type:      $env:PACKAGE_TYPE"
+          Write-Host "Full files:        $($files.Count)"
+          Write-Host "Full bytes:        $fullBytes"
+          Write-Host "Filtered files:    $($filteredFiles.Count)"
+          Write-Host "Filtered bytes:    $filteredBytes"
+
+
+      # ============================================================
+      # PREPARE ARTIFACT
+      # ============================================================
+
+      - name: Prepare artifact
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $artifactRoot = Join-Path `
+            $env:RUNNER_TEMP `
+            'artifact'
+
+          if (Test-Path -LiteralPath $artifactRoot) {
+            Remove-Item `
+              -LiteralPath $artifactRoot `
+              -Recurse `
+              -Force
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $artifactRoot | Out-Null
+
+          # ----------------------------------------------------------
+          # Filtered result is always included.
+          # ----------------------------------------------------------
+
+          $filteredDestination = Join-Path `
+            $artifactRoot `
+            'extracted'
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $filteredDestination | Out-Null
+
+          Get-ChildItem `
+            -LiteralPath $env:FILTERED_OUTPUT `
+            -Force |
+            Copy-Item `
+              -Destination $filteredDestination `
+              -Recurse `
+              -Force
+
+          # ----------------------------------------------------------
+          # Logs are always included.
+          # ----------------------------------------------------------
+
+          $logDestination = Join-Path `
+            $artifactRoot `
+            'logs'
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $logDestination | Out-Null
+
+          Get-ChildItem `
+            -LiteralPath $env:LOG_OUTPUT `
+            -Force |
+            Copy-Item `
+              -Destination $logDestination `
+              -Recurse `
+              -Force
+
+          # ----------------------------------------------------------
+          # Manifest
+          # ----------------------------------------------------------
+
+          Copy-Item `
+            -LiteralPath (Join-Path $env:EXTRACT_ROOT 'manifest.txt') `
+            -Destination $artifactRoot `
+            -Force
+
+          # ----------------------------------------------------------
+          # Optional complete extraction.
+          # ----------------------------------------------------------
+
+          if ('${{ inputs.keep_full_extraction }}' -eq 'true') {
+
+            $fullDestination = Join-Path `
+              $artifactRoot `
+              'full-extraction'
+
+            New-Item `
+              -ItemType Directory `
+              -Force `
+              -Path $fullDestination | Out-Null
+
+            Get-ChildItem `
+              -LiteralPath $env:FULL_OUTPUT `
+              -Force |
+              Copy-Item `
+                -Destination $fullDestination `
+                -Recurse `
+                -Force
+          }
+
+          "ARTIFACT_ROOT=$artifactRoot" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+
+      # ============================================================
+      # UPLOAD ARTIFACT
+      # ============================================================
+
+      - name: Upload extraction artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stalker2-${{ env.PACKAGE_TYPE }}-extraction-${{ github.run_id }}
+          path: ${{ env.ARTIFACT_ROOT }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+
+      # ============================================================
+      # GITHUB SUMMARY
+      # ============================================================
+
+      - name: Workflow summary
+        run: |
+          @"
+          ## S.T.A.L.K.E.R. 2 Universal Container Extraction
+
+          **Package:** `${{ inputs.package_path }}`
+
+          **Detected type:** `${{ env.PACKAGE_TYPE }}`
+
+          **Requested type:** `${{ inputs.package_type }}`
+
+          **Include filter:** `${{ inputs.include }}`
+
+          **AES key used:** `${{ inputs.use_aes_key }}`
+
+          **repak:** `v0.2.3`
+
+          **retoc:** `v0.1.5`
+
+          ### Extraction
+
+          The workflow automatically selected the appropriate extractor:
+
+          - `.pak` → `repak`
+          - `.utoc` + `.ucas` → `retoc`
+
+          The filtered extraction is available in the workflow artifact.
+
+          Logs and the generated manifest are included as well.
+
+          "@ >> $env:GITHUB_STEP_SUMMARY
