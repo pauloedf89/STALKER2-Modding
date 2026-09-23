@@ -45,7 +45,11 @@ jobs:
         if: steps.cargo-cache.outputs.cache-hit != 'true'
         run: |
           cargo install --git https://github.com/trumank/repak repak_cli
-          cargo install --git https://github.com/trumank/retoc retoc
+          cargo install --git https://github.com/trumank/retoc retoc_cli
+          # binary name varies by version (retoc / retoc_cli) - make sure a `retoc` alias exists
+          if ! command -v retoc >/dev/null && command -v retoc_cli >/dev/null; then
+            ln -s "$(command -v retoc_cli)" "$(dirname "$(command -v retoc_cli)")/retoc"
+          fi
 
       - name: Extract pak(s)
         env:
@@ -67,12 +71,17 @@ jobs:
 
             if [[ -f "${base}.utoc" && -f "${base}.ucas" ]]; then
               echo "IoStore container (.pak+.utoc+.ucas) -> using retoc"
-              mkdir -p "extracted/${base}"
+              # retoc's to-legacy takes a directory containing the pak/utoc/ucas
+              # trio as input, and a directory to write loose legacy assets into.
+              stage="$(mktemp -d)"
+              cp "${base}.pak" "${base}.utoc" "${base}.ucas" "$stage/"
+              rm -rf "extracted/${base}"
               if [[ -n "$AES_KEY" ]]; then
-                retoc -a "$AES_KEY" to-legacy "${base}.utoc" "extracted/${base}"
+                retoc -a "$AES_KEY" to-legacy "$stage" "extracted/${base}"
               else
-                retoc to-legacy "${base}.utoc" "extracted/${base}"
+                retoc to-legacy "$stage" "extracted/${base}"
               fi
+              rm -rf "$stage"
             else
               echo "Legacy pak -> using repak_cli"
               rm -rf "extracted/${base}"
