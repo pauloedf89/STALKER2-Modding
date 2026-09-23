@@ -1,0 +1,113 @@
+name: Extract STALKER 2 PAK
+
+# Manually triggered: pick a pak (or "all") from the repo root and it gets
+# unpacked into extracted/<pak-name>/... so you can edit the .cfg files there.
+on:
+  workflow_dispatch:
+    inputs:
+      pak_name:
+        description: 'Base filename (no extension) of the .pak at repo root, e.g. "StalkerUnlimited_NC_50_P". Use "all" to extract every top-level .pak.'
+        required: true
+        default: 'all'
+      aes_key:
+        description: 'Optional AES key (hex/base64) if the pak/container is encrypted. Leave blank for unencrypted mod paks.'
+        required: false
+        default: ''
+      commit_changes:
+        description: 'Commit and push the extracted files back to this branch?'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo tools
+        id: cargo-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: pak-tools-repak-retoc-v1
+
+      # repak_cli handles legacy .pak-only archives.
+      # retoc handles IoStore archives (.pak + .utoc + .ucas trio).
+      - name: Install repak_cli and retoc
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install --git https://github.com/trumank/repak repak_cli
+          cargo install --git https://github.com/trumank/retoc retoc
+
+      - name: Extract pak(s)
+        env:
+          PAK_NAME: ${{ inputs.pak_name }}
+          AES_KEY: ${{ inputs.aes_key }}
+        run: |
+          set -e
+          shopt -s nullglob
+          mkdir -p extracted
+          found=0
+
+          for pak in *.pak; do
+            base="${pak%.pak}"
+            if [[ "$PAK_NAME" != "all" && "$base" != "$PAK_NAME" ]]; then
+              continue
+            fi
+            found=1
+            echo "== Extracting $pak =="
+
+            if [[ -f "${base}.utoc" && -f "${base}.ucas" ]]; then
+              echo "IoStore container (.pak+.utoc+.ucas) -> using retoc"
+              mkdir -p "extracted/${base}"
+              if [[ -n "$AES_KEY" ]]; then
+                retoc -a "$AES_KEY" to-legacy "${base}.utoc" "extracted/${base}"
+              else
+                retoc to-legacy "${base}.utoc" "extracted/${base}"
+              fi
+            else
+              echo "Legacy pak -> using repak_cli"
+              rm -rf "extracted/${base}"
+              if [[ -n "$AES_KEY" ]]; then
+                repak_cli --aes-key "$AES_KEY" unpack "$pak"
+              else
+                repak_cli unpack "$pak"
+              fi
+              mv "${base}" "extracted/${base}"
+            fi
+          done
+
+          if [[ "$found" -eq 0 ]]; then
+            echo "::error::No matching .pak file found at repo root for pak_name='$PAK_NAME'"
+            exit 1
+          fi
+
+      - name: Show extracted .cfg files
+        run: find extracted -iname '*.cfg' | sort
+
+      - name: Commit extracted files
+        if: ${{ inputs.commit_changes == 'true' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add extracted
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Extract ${{ inputs.pak_name }} pak contents [skip ci]"
+            git push
+          fi
+
+      - name: Upload extracted files as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extracted-${{ inputs.pak_name }}
+          path: extracted/
