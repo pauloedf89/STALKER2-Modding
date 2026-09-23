@@ -1,0 +1,296 @@
+name: S.T.A.L.K.E.R. 2 - UE5.4 IoStore Extractor
+
+on:
+  workflow_dispatch:
+    inputs:
+      paks_path:
+        description: 'Full path to S.T.A.L.K.E.R. 2 Content\Paks on the self-hosted Windows runner'
+        required: true
+        type: string
+      filter:
+        description: 'Optional asset/path filter. Example: CharacterWeaponSettingsPrototypes'
+        required: false
+        default: ''
+        type: string
+      mode:
+        description: 'Extraction mode'
+        required: true
+        default: 'legacy'
+        type: choice
+        options:
+          - inspect
+          - legacy
+          - raw
+      include_shaders:
+        description: 'Include shader libraries (legacy mode)'
+        required: true
+        default: false
+        type: boolean
+      output_folder:
+        description: 'Output folder on the runner'
+        required: true
+        default: 'STALKER2-Extracted'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    name: Extract S.T.A.L.K.E.R. 2 UE5.4 assets
+    runs-on: [self-hosted, windows, x64, stalker2]
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Validate runner and game files
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          Write-Host "Runner: $env:COMPUTERNAME"
+          Write-Host "PowerShell: $($PSVersionTable.PSVersion)"
+          Write-Host "Paks path: ${{ inputs.paks_path }}"
+
+          $paks = '${{ inputs.paks_path }}'
+
+          if (-not (Test-Path -LiteralPath $paks -PathType Container)) {
+            throw "Paks directory does not exist: $paks"
+          }
+
+          $utoc = @(Get-ChildItem -LiteralPath $paks -Filter '*.utoc' -File -ErrorAction Stop)
+          $ucas = @(Get-ChildItem -LiteralPath $paks -Filter '*.ucas' -File -ErrorAction Stop)
+          $pak  = @(Get-ChildItem -LiteralPath $paks -Filter '*.pak'  -File -ErrorAction Stop)
+
+          Write-Host ".utoc files: $($utoc.Count)"
+          Write-Host ".ucas files: $($ucas.Count)"
+          Write-Host ".pak files : $($pak.Count)"
+
+          if ($utoc.Count -eq 0 -or $ucas.Count -eq 0) {
+            throw "No complete IoStore set was detected. S.T.A.L.K.E.R. 2 requires the .utoc/.ucas containers for this workflow."
+          }
+
+      - name: Download retoc v0.1.5
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $toolDir = Join-Path $env:RUNNER_TEMP 'retoc'
+          New-Item -ItemType Directory -Force -Path $toolDir | Out-Null
+
+          $zip = Join-Path $toolDir 'retoc.zip'
+          $sha = Join-Path $toolDir 'retoc.zip.sha256'
+
+          $url = 'https://github.com/trumank/retoc/releases/download/v0.1.5/retoc_cli-x86_64-pc-windows-msvc.zip'
+          $shaUrl = 'https://github.com/trumank/retoc/releases/download/v0.1.5/retoc_cli-x86_64-pc-windows-msvc.zip.sha256'
+
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Invoke-WebRequest -Uri $shaUrl -OutFile $sha
+
+          $expected = (Get-Content -LiteralPath $sha -Raw).Trim().Split()[0].ToLowerInvariant()
+          $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+
+          Write-Host "Expected SHA256: $expected"
+          Write-Host "Actual SHA256:   $actual"
+
+          if ($expected -ne $actual) {
+            throw 'retoc SHA256 verification failed.'
+          }
+
+          $extractDir = Join-Path $toolDir 'bin'
+          New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
+          Expand-Archive -LiteralPath $zip -DestinationPath $extractDir -Force
+
+          $retoc = Get-ChildItem -LiteralPath $extractDir -Filter 'retoc.exe' -File -Recurse | Select-Object -First 1
+
+          if ($null -eq $retoc) {
+            throw 'retoc.exe was not found after extracting the release.'
+          }
+
+          "RETOC_EXE=$($retoc.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          & $retoc.FullName --version
+
+      - name: Prepare output directory
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $root = Join-Path $env:RUNNER_TEMP '${{ inputs.output_folder }}'
+
+          if (Test-Path -LiteralPath $root) {
+            Remove-Item -LiteralPath $root -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $root 'logs') | Out-Null
+
+          "EXTRACT_OUTPUT=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Inspect IoStore containers
+        if: ${{ inputs.mode == 'inspect' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $paks = '${{ inputs.paks_path }}'
+          $log = Join-Path $env:EXTRACT_OUTPUT 'logs\container-info.txt'
+
+          $utocs = Get-ChildItem -LiteralPath $paks -Filter '*.utoc' -File
+
+          foreach ($utoc in $utocs) {
+            Write-Host ""
+            Write-Host "===== $($utoc.Name) ====="
+
+            & $env:RETOC_EXE info $utoc.FullName 2>&1 |
+              Tee-Object -FilePath $log -Append
+          }
+
+      - name: Extract UE5.4 assets to legacy .uasset/.uexp
+        if: ${{ inputs.mode == 'legacy' }}
+        env:
+          STALKER2_AES_KEY: ${{ secrets.STALKER2_AES_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $paks = '${{ inputs.paks_path }}'
+          $output = $env:EXTRACT_OUTPUT
+          $filter = '${{ inputs.filter }}'
+
+          if ([string]::IsNullOrWhiteSpace($env:STALKER2_AES_KEY)) {
+            throw 'Repository secret STALKER2_AES_KEY is not configured. Add the S.T.A.L.K.E.R. 2 AES key as a GitHub Actions secret.'
+          }
+
+          $args = @(
+            '--aes-key', $env:STALKER2_AES_KEY,
+            'to-legacy',
+            '--version', 'UE5_4'
+          )
+
+          if ('${{ inputs.include_shaders }}' -eq 'false') {
+            $args += '--no-shaders'
+          }
+
+          if (-not [string]::IsNullOrWhiteSpace($filter)) {
+            $args += '--filter'
+            $args += $filter
+          }
+
+          $args += $paks
+          $args += $output
+
+          Write-Host "Running retoc UE5.4 to-legacy..."
+          Write-Host "Filter: $filter"
+
+          & $env:RETOC_EXE @args 2>&1 |
+            Tee-Object -FilePath (Join-Path $output 'logs\retoc-to-legacy.log')
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "retoc failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Extract raw IoStore chunks
+        if: ${{ inputs.mode == 'raw' }}
+        env:
+          STALKER2_AES_KEY: ${{ secrets.STALKER2_AES_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $paks = '${{ inputs.paks_path }}'
+          $output = Join-Path $env:EXTRACT_OUTPUT 'raw'
+          $filter = '${{ inputs.filter }}'
+
+          if ([string]::IsNullOrWhiteSpace($env:STALKER2_AES_KEY)) {
+            throw 'Repository secret STALKER2_AES_KEY is not configured.'
+          }
+
+          New-Item -ItemType Directory -Force -Path $output | Out-Null
+
+          $utocs = Get-ChildItem -LiteralPath $paks -Filter '*.utoc' -File
+
+          foreach ($utoc in $utocs) {
+            $name = [IO.Path]::GetFileNameWithoutExtension($utoc.Name)
+            $dest = Join-Path $output $name
+            New-Item -ItemType Directory -Force -Path $dest | Out-Null
+
+            Write-Host "Unpacking: $($utoc.Name)"
+
+            $args = @(
+              '--aes-key', $env:STALKER2_AES_KEY,
+              'unpack',
+              $utoc.FullName,
+              $dest
+            )
+
+            if (-not [string]::IsNullOrWhiteSpace($filter)) {
+              $args += '--filter'
+              $args += $filter
+            }
+
+            & $env:RETOC_EXE @args 2>&1 |
+              Tee-Object -FilePath (Join-Path $env:EXTRACT_OUTPUT "logs\unpack-$name.log")
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "retoc unpack failed for $($utoc.Name) with exit code $LASTEXITCODE."
+            }
+          }
+
+      - name: Generate manifest
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $manifest = Join-Path $env:EXTRACT_OUTPUT 'manifest.txt'
+
+          @(
+            'S.T.A.L.K.E.R. 2 - UE5.4 IoStore Extraction'
+            '================================================'
+            "Repository: $env:GITHUB_REPOSITORY"
+            "Commit: $env:GITHUB_SHA"
+            "Workflow run: $env:GITHUB_RUN_ID"
+            "Runner: $env:COMPUTERNAME"
+            "Mode: ${{ inputs.mode }}"
+            "Paks path: ${{ inputs.paks_path }}"
+            "Filter: ${{ inputs.filter }}"
+            "Include shaders: ${{ inputs.include_shaders }}"
+            ''
+            'Extracted files:'
+            '------------------------------------------------'
+          ) | Set-Content -LiteralPath $manifest -Encoding utf8
+
+          Get-ChildItem -LiteralPath $env:EXTRACT_OUTPUT -File -Recurse |
+            ForEach-Object {
+              $_.FullName.Substring($env:EXTRACT_OUTPUT.Length + 1)
+            } |
+            Sort-Object |
+            Add-Content -LiteralPath $manifest -Encoding utf8
+
+          $files = @(Get-ChildItem -LiteralPath $env:EXTRACT_OUTPUT -File -Recurse)
+          $bytes = ($files | Measure-Object -Property Length -Sum).Sum
+
+          "File count: $($files.Count)" | Add-Content -LiteralPath $manifest
+          "Total bytes: $bytes" | Add-Content -LiteralPath $manifest
+
+          Write-Host "Extracted files: $($files.Count)"
+          Write-Host "Extracted bytes: $bytes"
+
+      - name: Upload extraction artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stalker2-ue5.4-extraction-${{ github.run_id }}
+          path: ${{ env.EXTRACT_OUTPUT }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      - name: Workflow summary
+        run: |
+          @"
+          ## S.T.A.L.K.E.R. 2 UE5.4 Extraction
+
+          **Mode:** `${{ inputs.mode }}`
+
+          **Filter:** `${{ inputs.filter }}`
+
+          **Runner:** `$env:COMPUTERNAME`
+
+          The extraction was performed on the self-hosted runner.
+          The resulting files are available as the workflow artifact.
+          "@ >> $env:GITHUB_STEP_SUMMARY
