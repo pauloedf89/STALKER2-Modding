@@ -1,0 +1,1216 @@
+name: S.T.A.L.K.E.R. 2 - Hybrid PAK and IoStore Extractor
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_path:
+        description: "Path to .pak, .utoc, or .ucas"
+        required: true
+        default: "StalkerUnlimited_OC_50_P.pak"
+        type: string
+
+      include:
+        description: "Optional filter, for example CharacterWeaponSettingsPrototypes"
+        required: false
+        default: ""
+        type: string
+
+      use_aes_key:
+        description: "Use repository secret STALKER2_AES_KEY"
+        required: true
+        default: false
+        type: boolean
+
+      keep_full_extraction:
+        description: "Keep complete unfiltered extraction"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    name: Detect and extract STALKER 2 containers
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+
+      # ============================================================
+      # DETECT PACKAGE
+      # ============================================================
+
+      - name: Detect package components
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $inputPath = "${{ inputs.package_path }}"
+
+          if (-not (Test-Path -LiteralPath $inputPath -PathType Leaf)) {
+              throw "File not found: $inputPath"
+          }
+
+          $selected = Get-Item -LiteralPath $inputPath
+
+          $directory = $selected.DirectoryName
+          $baseName = [System.IO.Path]::GetFileNameWithoutExtension($selected.Name)
+
+          $pak  = Join-Path $directory "$baseName.pak"
+          $utoc = Join-Path $directory "$baseName.utoc"
+          $ucas = Join-Path $directory "$baseName.ucas"
+
+          $hasPak  = Test-Path -LiteralPath $pak -PathType Leaf
+          $hasUtoc = Test-Path -LiteralPath $utoc -PathType Leaf
+          $hasUcas = Test-Path -LiteralPath $ucas -PathType Leaf
+
+          Write-Host ""
+          Write-Host "=============================================="
+          Write-Host "STALKER 2 PACKAGE DETECTION"
+          Write-Host "=============================================="
+          Write-Host "Selected: $($selected.FullName)"
+          Write-Host "Base name: $baseName"
+          Write-Host ""
+          Write-Host "PAK : $hasPak"
+          Write-Host "UTOC: $hasUtoc"
+          Write-Host "UCAS: $hasUcas"
+          Write-Host ""
+
+          if (-not $hasPak -and -not ($hasUtoc -and $hasUcas)) {
+              throw @"
+No valid STALKER 2 container set was found.
+
+Expected:
+
+  PACKAGE.pak
+
+or:
+
+  PACKAGE.utoc
+  PACKAGE.ucas
+
+or:
+
+  PACKAGE.pak
+  PACKAGE.utoc
+  PACKAGE.ucas
+"@
+          }
+
+          if ($hasPak -and $hasUtoc -and $hasUcas) {
+              $type = "hybrid"
+          }
+          elseif ($hasPak) {
+              $type = "pak"
+          }
+          else {
+              $type = "iostore"
+          }
+
+          Write-Host "Detected package type: $type"
+
+          # Export paths
+          "PACKAGE_TYPE=$type" >> $env:GITHUB_ENV
+          "PACKAGE_BASENAME=$baseName" >> $env:GITHUB_ENV
+          "PACKAGE_DIRECTORY=$directory" >> $env:GITHUB_ENV
+
+          "PAK_PATH=$pak" >> $env:GITHUB_ENV
+          "UTOC_PATH=$utoc" >> $env:GITHUB_ENV
+          "UCAS_PATH=$ucas" >> $env:GITHUB_ENV
+
+
+      # ============================================================
+      # DOWNLOAD REPAK
+      # ============================================================
+
+      - name: Download repak
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ($env:PACKAGE_TYPE -eq "iostore") {
+              Write-Host "PAK not detected. Skipping repak."
+              exit 0
+          }
+
+          $dir = Join-Path $env:RUNNER_TEMP "repak"
+          $bin = Join-Path $dir "bin"
+          $zip = Join-Path $dir "repak.zip"
+
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+
+          $url = "https://github.com/trumank/repak/releases/download/v0.2.3/repak_cli-x86_64-pc-windows-msvc.zip"
+
+          Invoke-WebRequest `
+            -Uri $url `
+            -OutFile $zip
+
+          Expand-Archive `
+            -LiteralPath $zip `
+            -DestinationPath $bin `
+            -Force
+
+          $exe = Get-ChildItem `
+            -LiteralPath $bin `
+            -Filter "repak.exe" `
+            -Recurse `
+            -File |
+            Select-Object -First 1
+
+          if ($null -eq $exe) {
+              throw "repak.exe was not found."
+          }
+
+          "REPAK_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+
+          & $exe.FullName --version
+
+
+      # ============================================================
+      # DOWNLOAD RETOC
+      # ============================================================
+
+      - name: Download retoc
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ($env:PACKAGE_TYPE -eq "pak") {
+              Write-Host "IoStore not detected. Skipping retoc."
+              exit 0
+          }
+
+          $dir = Join-Path $env:RUNNER_TEMP "retoc"
+          $bin = Join-Path $dir "bin"
+          $zip = Join-Path $dir "retoc.zip"
+
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+
+          $url = "https://github.com/trumank/retoc/releases/download/v0.1.5/retoc_cli-x86_64-pc-windows-msvc.zip"
+
+          Invoke-WebRequest `
+            -Uri $url `
+            -OutFile $zip
+
+          Expand-Archive `
+            -LiteralPath $zip `
+            -DestinationPath $bin `
+            -Force
+
+          $exe = Get-ChildItem `
+            -LiteralPath $bin `
+            -Filter "retoc.exe" `
+            -Recurse `
+            -File |
+            Select-Object -First 1
+
+          if ($null -eq $exe) {
+              throw "retoc.exe was not found."
+          }
+
+          "RETOC_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+
+          & $exe.FullName --version
+
+
+      # ============================================================
+      # PREPARE DIRECTORIES
+      # ============================================================
+
+      - name: Prepare directories
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $root = Join-Path `
+            $env:RUNNER_TEMP `
+            "STALKER2_Hybrid_Extraction"
+
+          if (Test-Path -LiteralPath $root) {
+              Remove-Item `
+                -LiteralPath $root `
+                -Recurse `
+                -Force
+          }
+
+          $pakOut = Join-Path $root "pak"
+          $ioOut = Join-Path $root "iostore"
+          $combined = Join-Path $root "combined"
+          $reports = Join-Path $root "reports"
+          $logs = Join-Path $root "logs"
+
+          foreach ($path in @(
+              $root,
+              $pakOut,
+              $ioOut,
+              $combined,
+              $reports,
+              $logs
+          )) {
+              New-Item `
+                -ItemType Directory `
+                -Force `
+                -Path $path |
+                Out-Null
+          }
+
+          "EXTRACT_ROOT=$root" >> $env:GITHUB_ENV
+          "PAK_OUTPUT=$pakOut" >> $env:GITHUB_ENV
+          "IO_OUTPUT=$ioOut" >> $env:GITHUB_ENV
+          "COMBINED_OUTPUT=$combined" >> $env:GITHUB_ENV
+          "REPORT_OUTPUT=$reports" >> $env:GITHUB_ENV
+          "LOG_OUTPUT=$logs" >> $env:GITHUB_ENV
+
+
+      # ============================================================
+      # EXTRACT PAK
+      # ============================================================
+
+      - name: Extract legacy PAK
+        env:
+          STALKER2_AES_KEY: ${{ secrets.STALKER2_AES_KEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ($env:PACKAGE_TYPE -eq "iostore") {
+              Write-Host "No PAK component."
+              exit 0
+          }
+
+          Write-Host ""
+          Write-Host "=============================================="
+          Write-Host "REPAK"
+          Write-Host "=============================================="
+
+          $args = @()
+
+          if ("${{ inputs.use_aes_key }}" -eq "true") {
+
+              if ([string]::IsNullOrWhiteSpace($env:STALKER2_AES_KEY)) {
+                  throw "STALKER2_AES_KEY is not configured."
+              }
+
+              $args += "--aes-key"
+              $args += $env:STALKER2_AES_KEY
+          }
+
+          # INFO
+          & $env:REPAK_EXE `
+            @args `
+            info `
+            $env:PAK_PATH `
+            2>&1 |
+            Tee-Object `
+              -FilePath (
+                Join-Path $env:LOG_OUTPUT "pak-info.txt"
+              )
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "repak info failed."
+          }
+
+          # LIST
+          & $env:REPAK_EXE `
+            @args `
+            list `
+            $env:PAK_PATH `
+            2>&1 |
+            Tee-Object `
+              -FilePath (
+                Join-Path $env:LOG_OUTPUT "pak-list.txt"
+              )
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "repak list failed."
+          }
+
+          # UNPACK
+          $unpackArgs = @($args)
+
+          $unpackArgs += "unpack"
+          $unpackArgs += $env:PAK_PATH
+
+          Push-Location $env:PAK_OUTPUT
+
+          try {
+
+              & $env:REPAK_EXE `
+                @unpackArgs `
+                2>&1 |
+                Tee-Object `
+                  -FilePath (
+                    Join-Path $env:LOG_OUTPUT "pak-unpack.txt"
+                  )
+
+              if ($LASTEXITCODE -ne 0) {
+                  throw "repak unpack failed."
+              }
+
+          }
+          finally {
+              Pop-Location
+          }
+
+
+      # ============================================================
+      # EXTRACT IOSTORE
+      # ============================================================
+
+      - name: Extract IoStore
+        env:
+          STALKER2_AES_KEY: ${{ secrets.STALKER2_AES_KEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if ($env:PACKAGE_TYPE -eq "pak") {
+              Write-Host "No IoStore component."
+              exit 0
+          }
+
+          Write-Host ""
+          Write-Host "=============================================="
+          Write-Host "RETOC"
+          Write-Host "=============================================="
+
+          $args = @()
+
+          if ("${{ inputs.use_aes_key }}" -eq "true") {
+
+              if ([string]::IsNullOrWhiteSpace($env:STALKER2_AES_KEY)) {
+                  throw "STALKER2_AES_KEY is not configured."
+              }
+
+              $args += "--aes-key"
+              $args += $env:STALKER2_AES_KEY
+          }
+
+          # INFO
+          & $env:RETOC_EXE `
+            @args `
+            info `
+            $env:UTOC_PATH `
+            2>&1 |
+            Tee-Object `
+              -FilePath (
+                Join-Path $env:LOG_OUTPUT "iostore-info.txt"
+              )
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "retoc info failed."
+          }
+
+          # LIST
+          & $env:RETOC_EXE `
+            @args `
+            list `
+            $env:UTOC_PATH `
+            2>&1 |
+            Tee-Object `
+              -FilePath (
+                Join-Path $env:LOG_OUTPUT "iostore-list.txt"
+              )
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "retoc list failed."
+          }
+
+          # MANIFEST
+          & $env:RETOC_EXE `
+            @args `
+            manifest `
+            $env:UTOC_PATH `
+            2>&1 |
+            Tee-Object `
+              -FilePath (
+                Join-Path $env:LOG_OUTPUT "iostore-manifest.txt"
+              )
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "retoc manifest failed."
+          }
+
+          # UNPACK
+          $unpackArgs = @($args)
+
+          $unpackArgs += "unpack"
+          $unpackArgs += $env:UTOC_PATH
+          $unpackArgs += $env:IO_OUTPUT
+
+          & $env:RETOC_EXE `
+            @unpackArgs `
+            2>&1 |
+            Tee-Object `
+              -FilePath (
+                Join-Path $env:LOG_OUTPUT "iostore-unpack.txt"
+              )
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "retoc unpack failed."
+          }
+
+
+      # ============================================================
+      # GENERATE FILE INVENTORIES
+      # ============================================================
+
+      - name: Generate file inventories
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $pakInventory = Join-Path `
+            $env:REPORT_OUTPUT `
+            "pak-files.txt"
+
+          $ioInventory = Join-Path `
+            $env:REPORT_OUTPUT `
+            "iostore-files.txt"
+
+          if ($env:PACKAGE_TYPE -ne "iostore") {
+
+              Get-ChildItem `
+                -LiteralPath $env:PAK_OUTPUT `
+                -File `
+                -Recurse |
+                ForEach-Object {
+
+                    $_.FullName.Substring(
+                        $env:PAK_OUTPUT.Length + 1
+                    ).Replace("\","/")
+
+                } |
+                Sort-Object |
+                Set-Content `
+                  -LiteralPath $pakInventory `
+                  -Encoding UTF8
+          }
+          else {
+              "NO PAK FILES" |
+                Set-Content `
+                  -LiteralPath $pakInventory `
+                  -Encoding UTF8
+          }
+
+          if ($env:PACKAGE_TYPE -ne "pak") {
+
+              Get-ChildItem `
+                -LiteralPath $env:IO_OUTPUT `
+                -File `
+                -Recurse |
+                ForEach-Object {
+
+                    $_.FullName.Substring(
+                        $env:IO_OUTPUT.Length + 1
+                    ).Replace("\","/")
+
+                } |
+                Sort-Object |
+                Set-Content `
+                  -LiteralPath $ioInventory `
+                  -Encoding UTF8
+          }
+          else {
+              "NO IOSTORE FILES" |
+                Set-Content `
+                  -LiteralPath $ioInventory `
+                  -Encoding UTF8
+          }
+
+
+      # ============================================================
+      # FILE ORIGIN REPORT
+      # ============================================================
+
+      - name: Generate file origin report
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $report = Join-Path `
+            $env:REPORT_OUTPUT `
+            "file-origin-report.csv"
+
+          $pakFiles = @()
+          $ioFiles = @()
+
+          if ($env:PACKAGE_TYPE -ne "iostore") {
+
+              $pakFiles = @(
+                  Get-ChildItem `
+                    -LiteralPath $env:PAK_OUTPUT `
+                    -File `
+                    -Recurse |
+                  ForEach-Object {
+
+                      $_.FullName.Substring(
+                          $env:PAK_OUTPUT.Length + 1
+                      ).Replace("\","/")
+                  }
+              )
+          }
+
+          if ($env:PACKAGE_TYPE -ne "pak") {
+
+              $ioFiles = @(
+                  Get-ChildItem `
+                    -LiteralPath $env:IO_OUTPUT `
+                    -File `
+                    -Recurse |
+                  ForEach-Object {
+
+                      $_.FullName.Substring(
+                          $env:IO_OUTPUT.Length + 1
+                      ).Replace("\","/")
+                  }
+              )
+          }
+
+          $allFiles = @(
+              $pakFiles
+              $ioFiles
+          ) |
+            Sort-Object -Unique
+
+          $rows = foreach ($file in $allFiles) {
+
+              $fromPak = $pakFiles -contains $file
+              $fromIo = $ioFiles -contains $file
+
+              if ($fromPak -and $fromIo) {
+                  $origin = "BOTH"
+              }
+              elseif ($fromPak) {
+                  $origin = "PAK"
+              }
+              elseif ($fromIo) {
+                  $origin = "IOSTORE"
+              }
+              else {
+                  $origin = "UNKNOWN"
+              }
+
+              [PSCustomObject]@{
+                  File = $file
+                  Extension = (
+                      [System.IO.Path]::GetExtension($file)
+                  ).ToLower()
+                  Origin = $origin
+              }
+          }
+
+          $rows |
+            Export-Csv `
+              -LiteralPath $report `
+              -NoTypeInformation `
+              -Encoding UTF8
+
+
+      # ============================================================
+      # EXTENSION SUMMARY
+      # ============================================================
+
+      - name: Generate extension summary
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $input = Join-Path `
+            $env:REPORT_OUTPUT `
+            "file-origin-report.csv"
+
+          $output = Join-Path `
+            $env:REPORT_OUTPUT `
+            "extension-summary.csv"
+
+          $data = Import-Csv -LiteralPath $input
+
+          $rows = foreach ($group in (
+              $data |
+              Group-Object Extension |
+              Sort-Object Name
+          )) {
+
+              [PSCustomObject]@{
+                  Extension = $group.Name
+                  Total = $group.Count
+                  PAK = @(
+                      $group.Group |
+                      Where-Object Origin -eq "PAK"
+                  ).Count
+                  IoStore = @(
+                      $group.Group |
+                      Where-Object Origin -eq "IOSTORE"
+                  ).Count
+                  Both = @(
+                      $group.Group |
+                      Where-Object Origin -eq "BOTH"
+                  ).Count
+              }
+          }
+
+          $rows |
+            Export-Csv `
+              -LiteralPath $output `
+              -NoTypeInformation `
+              -Encoding UTF8
+
+
+      # ============================================================
+      # CFG REPORT
+      # ============================================================
+
+      - name: Generate CFG report
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $input = Join-Path `
+            $env:REPORT_OUTPUT `
+            "file-origin-report.csv"
+
+          $output = Join-Path `
+            $env:REPORT_OUTPUT `
+            "cfg-files.txt"
+
+          $data = Import-Csv -LiteralPath $input
+
+          $cfg = @(
+              $data |
+              Where-Object {
+                  $_.Extension -eq ".cfg"
+              } |
+              Sort-Object File
+          )
+
+          if ($cfg.Count -eq 0) {
+
+              @(
+                  "NO CFG FILES FOUND"
+                  ""
+                  "No .cfg files were extracted from the"
+                  "legacy PAK or IoStore container."
+              ) |
+              Set-Content `
+                -LiteralPath $output `
+                -Encoding UTF8
+
+          }
+          else {
+
+              $cfg |
+                ForEach-Object {
+                    "$($_.Origin)`t$($_.File)"
+                } |
+                Set-Content `
+                  -LiteralPath $output `
+                  -Encoding UTF8
+          }
+
+
+      # ============================================================
+      # UNREAL ASSET REPORT
+      # ============================================================
+
+      - name: Generate Unreal asset report
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $input = Join-Path `
+            $env:REPORT_OUTPUT `
+            "file-origin-report.csv"
+
+          $output = Join-Path `
+            $env:REPORT_OUTPUT `
+            "unreal-assets.txt"
+
+          $data = Import-Csv -LiteralPath $input
+
+          $assets = @(
+              $data |
+              Where-Object {
+                  $_.Extension -in @(
+                      ".uasset",
+                      ".uexp",
+                      ".ubulk",
+                      ".umap",
+                      ".uptnl"
+                  )
+              } |
+              Sort-Object File
+          )
+
+          if ($assets.Count -eq 0) {
+
+              "NO UNREAL ASSETS FOUND" |
+                Set-Content `
+                  -LiteralPath $output `
+                  -Encoding UTF8
+          }
+          else {
+
+              $assets |
+                ForEach-Object {
+                    "$($_.Origin)`t$($_.Extension)`t$($_.File)"
+                } |
+                Set-Content `
+                  -LiteralPath $output `
+                  -Encoding UTF8
+          }
+
+
+      # ============================================================
+      # MASTER REPORT
+      # ============================================================
+
+      - name: Generate master report
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $input = Join-Path `
+            $env:REPORT_OUTPUT `
+            "file-origin-report.csv"
+
+          $output = Join-Path `
+            $env:REPORT_OUTPUT `
+            "MASTER-REPORT.txt"
+
+          $data = Import-Csv -LiteralPath $input
+
+          $total = $data.Count
+
+          $pakCount = @(
+              $data |
+              Where-Object Origin -eq "PAK"
+          ).Count
+
+          $ioCount = @(
+              $data |
+              Where-Object Origin -eq "IOSTORE"
+          ).Count
+
+          $bothCount = @(
+              $data |
+              Where-Object Origin -eq "BOTH"
+          ).Count
+
+          $cfgCount = @(
+              $data |
+              Where-Object Extension -eq ".cfg"
+          ).Count
+
+          $uassetCount = @(
+              $data |
+              Where-Object Extension -eq ".uasset"
+          ).Count
+
+          $uexpCount = @(
+              $data |
+              Where-Object Extension -eq ".uexp"
+          ).Count
+
+          $ubulkCount = @(
+              $data |
+              Where-Object Extension -eq ".ubulk"
+          ).Count
+
+          $umapCount = @(
+              $data |
+              Where-Object Extension -eq ".umap"
+          ).Count
+
+          @(
+              "S.T.A.L.K.E.R. 2 CONTAINER EXTRACTION"
+              "=========================================="
+              ""
+              "Package: $env:PACKAGE_BASENAME"
+              "Detected type: $env:PACKAGE_TYPE"
+              ""
+              "PAK:"
+              "$env:PAK_PATH"
+              ""
+              "UTOC:"
+              "$env:UTOC_PATH"
+              ""
+              "UCAS:"
+              "$env:UCAS_PATH"
+              ""
+              "=========================================="
+              "FILE COUNTS"
+              "=========================================="
+              ""
+              "Total files : $total"
+              "PAK only    : $pakCount"
+              "IoStore only: $ioCount"
+              "Both       : $bothCount"
+              ""
+              ".cfg    : $cfgCount"
+              ".uasset : $uassetCount"
+              ".uexp   : $uexpCount"
+              ".ubulk  : $ubulkCount"
+              ".umap   : $umapCount"
+              ""
+              "=========================================="
+              "REPORTS"
+              "=========================================="
+              ""
+              "file-origin-report.csv"
+              "extension-summary.csv"
+              "cfg-files.txt"
+              "unreal-assets.txt"
+              "pak-files.txt"
+              "iostore-files.txt"
+          ) |
+          Set-Content `
+            -LiteralPath $output `
+            -Encoding UTF8
+
+
+      # ============================================================
+      # BUILD COMBINED OUTPUT
+      # ============================================================
+
+      - name: Build combined filtered output
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $include = "${{ inputs.include }}"
+
+          $pakDestination = Join-Path `
+            $env:COMBINED_OUTPUT `
+            "pak"
+
+          $ioDestination = Join-Path `
+            $env:COMBINED_OUTPUT `
+            "iostore"
+
+          if ($env:PACKAGE_TYPE -ne "iostore") {
+
+              New-Item `
+                -ItemType Directory `
+                -Force `
+                -Path $pakDestination |
+                Out-Null
+          }
+
+          if ($env:PACKAGE_TYPE -ne "pak") {
+
+              New-Item `
+                -ItemType Directory `
+                -Force `
+                -Path $ioDestination |
+                Out-Null
+          }
+
+          # No filter
+          if ([string]::IsNullOrWhiteSpace($include)) {
+
+              if ($env:PACKAGE_TYPE -ne "iostore") {
+
+                  Get-ChildItem `
+                    -LiteralPath $env:PAK_OUTPUT `
+                    -Force |
+                  Copy-Item `
+                    -Destination $pakDestination `
+                    -Recurse `
+                    -Force
+              }
+
+              if ($env:PACKAGE_TYPE -ne "pak") {
+
+                  Get-ChildItem `
+                    -LiteralPath $env:IO_OUTPUT `
+                    -Force |
+                  Copy-Item `
+                    -Destination $ioDestination `
+                    -Recurse `
+                    -Force
+              }
+
+              exit 0
+          }
+
+          $pattern = $include.Replace("\","/")
+
+          Write-Host "Filter: $pattern"
+
+          if ($env:PACKAGE_TYPE -ne "iostore") {
+
+              Get-ChildItem `
+                -LiteralPath $env:PAK_OUTPUT `
+                -File `
+                -Recurse |
+              ForEach-Object {
+
+                  $relative = $_.FullName.Substring(
+                      $env:PAK_OUTPUT.Length + 1
+                  ).Replace("\","/")
+
+                  if (
+                      $relative -like "*$pattern*" -or
+                      $relative -like $pattern
+                  ) {
+
+                      $destination = Join-Path `
+                        $pakDestination `
+                        $relative
+
+                      New-Item `
+                        -ItemType Directory `
+                        -Force `
+                        -Path (
+                            Split-Path `
+                              -Parent `
+                              $destination
+                        ) |
+                        Out-Null
+
+                      Copy-Item `
+                        -LiteralPath $_.FullName `
+                        -Destination $destination `
+                        -Force
+                  }
+              }
+          }
+
+          if ($env:PACKAGE_TYPE -ne "pak") {
+
+              Get-ChildItem `
+                -LiteralPath $env:IO_OUTPUT `
+                -File `
+                -Recurse |
+              ForEach-Object {
+
+                  $relative = $_.FullName.Substring(
+                      $env:IO_OUTPUT.Length + 1
+                  ).Replace("\","/")
+
+                  if (
+                      $relative -like "*$pattern*" -or
+                      $relative -like $pattern
+                  ) {
+
+                      $destination = Join-Path `
+                        $ioDestination `
+                        $relative
+
+                      New-Item `
+                        -ItemType Directory `
+                        -Force `
+                        -Path (
+                            Split-Path `
+                              -Parent `
+                              $destination
+                        ) |
+                        Out-Null
+
+                      Copy-Item `
+                        -LiteralPath $_.FullName `
+                        -Destination $destination `
+                        -Force
+                  }
+              }
+          }
+
+
+      # ============================================================
+      # PREPARE ARTIFACT
+      # ============================================================
+
+      - name: Prepare artifact
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $artifact = Join-Path `
+            $env:RUNNER_TEMP `
+            "STALKER2_ARTIFACT"
+
+          if (Test-Path -LiteralPath $artifact) {
+
+              Remove-Item `
+                -LiteralPath $artifact `
+                -Recurse `
+                -Force
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $artifact |
+            Out-Null
+
+          # Extracted
+          $destination = Join-Path $artifact "extracted"
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $destination |
+            Out-Null
+
+          Get-ChildItem `
+            -LiteralPath $env:COMBINED_OUTPUT `
+            -Force |
+          Copy-Item `
+            -Destination $destination `
+            -Recurse `
+            -Force
+
+          # Reports
+          $destination = Join-Path $artifact "reports"
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $destination |
+            Out-Null
+
+          Get-ChildItem `
+            -LiteralPath $env:REPORT_OUTPUT `
+            -Force |
+          Copy-Item `
+            -Destination $destination `
+            -Recurse `
+            -Force
+
+          # Logs
+          $destination = Join-Path $artifact "logs"
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $destination |
+            Out-Null
+
+          Get-ChildItem `
+            -LiteralPath $env:LOG_OUTPUT `
+            -Force |
+          Copy-Item `
+            -Destination $destination `
+            -Recurse `
+            -Force
+
+          # Full extraction
+          if ("${{ inputs.keep_full_extraction }}" -eq "true") {
+
+              $destination = Join-Path `
+                $artifact `
+                "full-extraction"
+
+              New-Item `
+                -ItemType Directory `
+                -Force `
+                -Path $destination |
+                Out-Null
+
+              if ($env:PACKAGE_TYPE -ne "iostore") {
+
+                  $pakDestination = Join-Path `
+                    $destination `
+                    "pak"
+
+                  New-Item `
+                    -ItemType Directory `
+                    -Force `
+                    -Path $pakDestination |
+                    Out-Null
+
+                  Get-ChildItem `
+                    -LiteralPath $env:PAK_OUTPUT `
+                    -Force |
+                  Copy-Item `
+                    -Destination $pakDestination `
+                    -Recurse `
+                    -Force
+              }
+
+              if ($env:PACKAGE_TYPE -ne "pak") {
+
+                  $ioDestination = Join-Path `
+                    $destination `
+                    "iostore"
+
+                  New-Item `
+                    -ItemType Directory `
+                    -Force `
+                    -Path $ioDestination |
+                    Out-Null
+
+                  Get-ChildItem `
+                    -LiteralPath $env:IO_OUTPUT `
+                    -Force |
+                  Copy-Item `
+                    -Destination $ioDestination `
+                    -Recurse `
+                    -Force
+              }
+          }
+
+          "ARTIFACT_ROOT=$artifact" >> $env:GITHUB_ENV
+
+
+      # ============================================================
+      # UPLOAD
+      # ============================================================
+
+      - name: Upload extraction artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: stalker2-hybrid-extraction-${{ github.run_id }}
+          path: ${{ env.ARTIFACT_ROOT }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+
+      # ============================================================
+      # SUMMARY
+      # ============================================================
+
+      - name: Workflow summary
+        run: |
+          $report = Join-Path `
+            $env:REPORT_OUTPUT `
+            "MASTER-REPORT.txt"
+
+          Add-Content `
+            -LiteralPath $env:GITHUB_STEP_SUMMARY `
+            -Value "## S.T.A.L.K.E.R. 2 Hybrid Extraction"
+
+          Add-Content `
+            -LiteralPath $env:GITHUB_STEP_SUMMARY `
+            -Value ""
+
+          Add-Content `
+            -LiteralPath $env:GITHUB_STEP_SUMMARY `
+            -Value "**Package:** $env:PACKAGE_BASENAME"
+
+          Add-Content `
+            -LiteralPath $env:GITHUB_STEP_SUMMARY `
+            -Value ""
+
+          Add-Content `
+            -LiteralPath $env:GITHUB_STEP_SUMMARY `
+            -Value "**Detected type:** $env:PACKAGE_TYPE"
+
+          Add-Content `
+            -LiteralPath $env:GITHUB_STEP_SUMMARY `
+            -Value ""
+
+          Add-Content `
+            -LiteralPath $env:GITHUB_STEP_SUMMARY `
+            -Value '```text'
+
+          Get-Content -LiteralPath $report |
+            Add-Content `
+              -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+          Add-Content `
+            -LiteralPath $env:GITHUB_STEP_SUMMARY `
+            -Value '```'
