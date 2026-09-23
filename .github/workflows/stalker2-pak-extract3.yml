@@ -1,0 +1,671 @@
+name: S.T.A.L.K.E.R. 2 - Extract CFG Files from PAK
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_path:
+        description: 'Repository path to the .pak file'
+        required: true
+        default: 'StalkerUnlimited_OC_50_P.pak'
+        type: string
+
+      use_aes_key:
+        description: 'Use STALKER2_AES_KEY for encrypted PAK'
+        required: true
+        default: false
+        type: boolean
+
+      output_folder:
+        description: 'Artifact/output folder name'
+        required: true
+        default: 'STALKER2_cfg_extraction'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+
+  extract:
+
+    name: Extract CFG files from PAK
+
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+
+      # ============================================================
+      # VALIDATE PAK
+      # ============================================================
+
+      - name: Validate PAK
+        run: |
+
+          $ErrorActionPreference = 'Stop'
+
+          $package = '${{ inputs.package_path }}'
+
+          if (-not (Test-Path -LiteralPath $package -PathType Leaf)) {
+
+            throw "PAK was not found in the repository: $package"
+          }
+
+          $item = Get-Item -LiteralPath $package
+
+          if ($item.Extension.ToLower() -ne '.pak') {
+
+            throw "This workflow accepts .pak files only. Supplied: $($item.Extension)"
+          }
+
+          Write-Host ''
+          Write-Host '========================================'
+          Write-Host 'STALKER 2 PAK'
+          Write-Host '========================================'
+          Write-Host "Path: $($item.FullName)"
+          Write-Host "File: $($item.Name)"
+          Write-Host "Size: $($item.Length) bytes"
+          Write-Host "AES enabled: ${{ inputs.use_aes_key }}"
+          Write-Host ''
+
+          "PACKAGE_PATH=$($item.FullName)" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+
+      # ============================================================
+      # DOWNLOAD REPAK
+      # ============================================================
+
+      - name: Download repak v0.2.3
+        run: |
+
+          $ErrorActionPreference = 'Stop'
+
+          $toolDir = Join-Path `
+            $env:RUNNER_TEMP `
+            'repak'
+
+          $binDir = Join-Path `
+            $toolDir `
+            'bin'
+
+          $zip = Join-Path `
+            $toolDir `
+            'repak.zip'
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $binDir |
+            Out-Null
+
+          $url = `
+            'https://github.com/trumank/repak/releases/download/v0.2.3/repak_cli-x86_64-pc-windows-msvc.zip'
+
+          Write-Host 'Downloading repak v0.2.3...'
+
+          Invoke-WebRequest `
+            -Uri $url `
+            -OutFile $zip
+
+          Expand-Archive `
+            -LiteralPath $zip `
+            -DestinationPath $binDir `
+            -Force
+
+          $repak = Get-ChildItem `
+            -LiteralPath $binDir `
+            -Filter 'repak.exe' `
+            -File `
+            -Recurse |
+            Select-Object -First 1
+
+          if ($null -eq $repak) {
+
+            throw 'repak.exe was not found.'
+          }
+
+          "REPAK_EXE=$($repak.FullName)" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          Write-Host "repak: $($repak.FullName)"
+
+          & $repak.FullName --version
+
+          if ($LASTEXITCODE -ne 0) {
+
+            throw 'repak --version failed.'
+          }
+
+
+      # ============================================================
+      # PREPARE DIRECTORIES
+      # ============================================================
+
+      - name: Prepare extraction directories
+        run: |
+
+          $ErrorActionPreference = 'Stop'
+
+          $root = Join-Path `
+            $env:RUNNER_TEMP `
+            '${{ inputs.output_folder }}'
+
+          $extracted = Join-Path `
+            $root `
+            'extracted'
+
+          $logs = Join-Path `
+            $root `
+            'logs'
+
+          if (Test-Path -LiteralPath $root) {
+
+            Remove-Item `
+              -LiteralPath $root `
+              -Recurse `
+              -Force
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $extracted |
+            Out-Null
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $logs |
+            Out-Null
+
+          "EXTRACT_ROOT=$root" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          "EXTRACTED_OUTPUT=$extracted" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          "LOG_OUTPUT=$logs" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+
+      # ============================================================
+      # INSPECT PAK
+      # ============================================================
+
+      - name: Inspect PAK
+        env:
+          STALKER2_AES_KEY: ${{ secrets.STALKER2_AES_KEY }}
+
+        run: |
+
+          $ErrorActionPreference = 'Stop'
+
+          $args = @()
+
+          if ('${{ inputs.use_aes_key }}' -eq 'true') {
+
+            if ([string]::IsNullOrWhiteSpace(
+              $env:STALKER2_AES_KEY
+            )) {
+
+              throw `
+                'use_aes_key=true but STALKER2_AES_KEY is not configured.'
+            }
+
+            $args += '--aes-key'
+            $args += $env:STALKER2_AES_KEY
+          }
+
+          Write-Host ''
+          Write-Host '========================================'
+          Write-Host 'REPAK INFO'
+          Write-Host '========================================'
+
+          & $env:REPAK_EXE `
+            @args `
+            info `
+            $env:PACKAGE_PATH `
+            2>&1 |
+            Tee-Object `
+              -FilePath (
+                Join-Path `
+                  $env:LOG_OUTPUT `
+                  'repak-info.txt'
+              )
+
+          if ($LASTEXITCODE -ne 0) {
+
+            throw `
+              "repak info failed with exit code $LASTEXITCODE."
+          }
+
+
+      # ============================================================
+      # LIST PAK
+      # ============================================================
+
+      - name: List PAK contents
+        env:
+          STALKER2_AES_KEY: ${{ secrets.STALKER2_AES_KEY }}
+
+        run: |
+
+          $ErrorActionPreference = 'Stop'
+
+          $args = @()
+
+          if ('${{ inputs.use_aes_key }}' -eq 'true') {
+
+            $args += '--aes-key'
+            $args += $env:STALKER2_AES_KEY
+          }
+
+          Write-Host ''
+          Write-Host '========================================'
+          Write-Host 'REPAK FILE LIST'
+          Write-Host '========================================'
+
+          & $env:REPAK_EXE `
+            @args `
+            list `
+            $env:PACKAGE_PATH `
+            2>&1 |
+            Tee-Object `
+              -FilePath (
+                Join-Path `
+                  $env:LOG_OUTPUT `
+                  'repak-list.txt'
+              )
+
+          if ($LASTEXITCODE -ne 0) {
+
+            throw `
+              "repak list failed with exit code $LASTEXITCODE."
+          }
+
+
+      # ============================================================
+      # EXTRACT ONLY CFG
+      # ============================================================
+
+      - name: Extract CFG files only
+        env:
+          STALKER2_AES_KEY: ${{ secrets.STALKER2_AES_KEY }}
+
+        run: |
+
+          $ErrorActionPreference = 'Stop'
+
+          $args = @()
+
+          # ----------------------------------------------------------
+          # AES
+          # ----------------------------------------------------------
+
+          if ('${{ inputs.use_aes_key }}' -eq 'true') {
+
+            if ([string]::IsNullOrWhiteSpace(
+              $env:STALKER2_AES_KEY
+            )) {
+
+              throw `
+                'use_aes_key=true but STALKER2_AES_KEY is not configured.'
+            }
+
+            $args += '--aes-key'
+            $args += $env:STALKER2_AES_KEY
+          }
+
+          # ----------------------------------------------------------
+          # UNPACK
+          # ----------------------------------------------------------
+
+          $args += 'unpack'
+
+          # Only extract CFG files.
+          #
+          # repak supports --include during unpacking.
+          #
+          $args += '--include'
+          $args += '**/*.cfg'
+
+          # Also match CFG files directly at the root.
+          #
+          $args += '--include'
+          $args += '*.cfg'
+
+          # Explicit output directory.
+          #
+          $args += '--output'
+          $args += $env:EXTRACTED_OUTPUT
+
+          $args += $env:PACKAGE_PATH
+
+          Write-Host ''
+          Write-Host '========================================'
+          Write-Host 'CFG EXTRACTION'
+          Write-Host '========================================'
+          Write-Host ''
+          Write-Host 'Extractor: repak v0.2.3'
+          Write-Host 'Filter:    *.cfg'
+          Write-Host "Output:    $env:EXTRACTED_OUTPUT"
+          Write-Host ''
+
+          & $env:REPAK_EXE `
+            @args `
+            2>&1 |
+            Tee-Object `
+              -FilePath (
+                Join-Path `
+                  $env:LOG_OUTPUT `
+                  'repak-cfg-extraction.txt'
+              )
+
+          if ($LASTEXITCODE -ne 0) {
+
+            throw `
+              "CFG extraction failed with exit code $LASTEXITCODE."
+          }
+
+
+      # ============================================================
+      # VERIFY RESULT
+      # ============================================================
+
+      - name: Verify extracted CFG files
+        run: |
+
+          $ErrorActionPreference = 'Stop'
+
+          $files = @(
+            Get-ChildItem `
+              -LiteralPath $env:EXTRACTED_OUTPUT `
+              -File `
+              -Recurse `
+              -Filter '*.cfg'
+          )
+
+          Write-Host ''
+          Write-Host '========================================'
+          Write-Host 'CFG EXTRACTION RESULT'
+          Write-Host '========================================'
+          Write-Host ''
+
+          Write-Host "CFG files found: $($files.Count)"
+          Write-Host ''
+
+          if ($files.Count -eq 0) {
+
+            Write-Warning `
+              'No .cfg files were extracted from the PAK.'
+
+          }
+          else {
+
+            foreach ($file in $files) {
+
+              $relative = $file.FullName.Substring(
+                $env:EXTRACTED_OUTPUT.Length + 1
+              )
+
+              Write-Host $relative
+            }
+          }
+
+
+      # ============================================================
+      # GENERATE CFG MANIFEST
+      # ============================================================
+
+      - name: Generate CFG manifest
+        run: |
+
+          $ErrorActionPreference = 'Stop'
+
+          $manifest = Join-Path `
+            $env:EXTRACT_ROOT `
+            'cfg-manifest.txt'
+
+          $files = @(
+            Get-ChildItem `
+              -LiteralPath $env:EXTRACTED_OUTPUT `
+              -File `
+              -Recurse `
+              -Filter '*.cfg'
+          )
+
+          @(
+            'S.T.A.L.K.E.R. 2 - PAK CFG EXTRACTION'
+            '=========================================='
+            ''
+            "Repository: $env:GITHUB_REPOSITORY"
+            "Commit: $env:GITHUB_SHA"
+            "Workflow run: $env:GITHUB_RUN_ID"
+            ''
+            "PAK: $env:PACKAGE_PATH"
+            ''
+            'Extractor: repak v0.2.3'
+            'Filter: *.cfg'
+            ''
+            "CFG files extracted: $($files.Count)"
+            ''
+            '=========================================='
+            'CFG FILES'
+            '=========================================='
+            ''
+          ) |
+          Set-Content `
+            -LiteralPath $manifest `
+            -Encoding utf8
+
+          foreach ($file in (
+            $files | Sort-Object FullName
+          )) {
+
+            $relative = $file.FullName.Substring(
+              $env:EXTRACTED_OUTPUT.Length + 1
+            ).Replace('\','/')
+
+            $size = $file.Length
+
+            "$relative`t$size bytes" |
+              Add-Content `
+                -LiteralPath $manifest `
+                -Encoding utf8
+          }
+
+          Write-Host ''
+          Write-Host "Manifest: $manifest"
+
+
+      # ============================================================
+      # PREPARE ARTIFACT
+      # ============================================================
+
+      - name: Prepare artifact
+        run: |
+
+          $ErrorActionPreference = 'Stop'
+
+          $artifactRoot = Join-Path `
+            $env:RUNNER_TEMP `
+            'artifact'
+
+          if (Test-Path -LiteralPath $artifactRoot) {
+
+            Remove-Item `
+              -LiteralPath $artifactRoot `
+              -Recurse `
+              -Force
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $artifactRoot |
+            Out-Null
+
+          # ----------------------------------------------------------
+          # CFG files
+          # ----------------------------------------------------------
+
+          $cfgDestination = Join-Path `
+            $artifactRoot `
+            'cfg'
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $cfgDestination |
+            Out-Null
+
+          if (
+            Test-Path `
+              -LiteralPath $env:EXTRACTED_OUTPUT
+          ) {
+
+            Get-ChildItem `
+              -LiteralPath $env:EXTRACTED_OUTPUT `
+              -Force |
+            Copy-Item `
+              -Destination $cfgDestination `
+              -Recurse `
+              -Force
+          }
+
+          # ----------------------------------------------------------
+          # Manifest
+          # ----------------------------------------------------------
+
+          Copy-Item `
+            -LiteralPath (
+              Join-Path `
+                $env:EXTRACT_ROOT `
+                'cfg-manifest.txt'
+            ) `
+            -Destination $artifactRoot `
+            -Force
+
+          # ----------------------------------------------------------
+          # Logs
+          # ----------------------------------------------------------
+
+          $logDestination = Join-Path `
+            $artifactRoot `
+            'logs'
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $logDestination |
+            Out-Null
+
+          Get-ChildItem `
+            -LiteralPath $env:LOG_OUTPUT `
+            -Force |
+          Copy-Item `
+            -Destination $logDestination `
+            -Recurse `
+            -Force
+
+          "ARTIFACT_ROOT=$artifactRoot" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+
+      # ============================================================
+      # UPLOAD ARTIFACT
+      # ============================================================
+
+      - name: Upload CFG extraction
+        uses: actions/upload-artifact@v6
+        with:
+          name: stalker2-cfg-${{ github.run_id }}
+          path: ${{ env.ARTIFACT_ROOT }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+
+      # ============================================================
+      # SUMMARY
+      # ============================================================
+
+      - name: Workflow summary
+        run: |
+
+          $files = @(
+            Get-ChildItem `
+              -LiteralPath $env:EXTRACTED_OUTPUT `
+              -File `
+              -Recurse `
+              -Filter '*.cfg'
+          )
+
+          @"
+          ## S.T.A.L.K.E.R. 2 - CFG Extraction
+
+          **PAK:** `${{ inputs.package_path }}`
+
+          **Extractor:** `repak v0.2.3`
+
+          **Filter:** `*.cfg`
+
+          **CFG files extracted:** `$($files.Count)`
+
+          ### Extracted CFG files
+
+          $(
+
+            if ($files.Count -eq 0) {
+
+              'No CFG files were found.'
+
+            }
+            else {
+
+              (
+                $files |
+                Sort-Object FullName |
+                ForEach-Object {
+
+                  $_.FullName.Substring(
+                    $env:EXTRACTED_OUTPUT.Length + 1
+                  ).Replace('\','/')
+                }
+              ) -join "`n"
+            }
+
+          )
+          "@ >> $env:GITHUB_STEP_SUMMARY
